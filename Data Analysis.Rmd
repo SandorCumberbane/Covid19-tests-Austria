@@ -1,0 +1,253 @@
+---
+title: "Data Analysis"
+author: "Alexander Kopp"
+date: "1/17/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Task
+
+1. Select in Moodle one of the available datasets.
+2. Download the data and put it into your project.
+3. Read the data into an RMD file, perform data wrangling as required and useful, analyse the data,
+visualize the data and interpret the data.
+
+
+## Used library:
+
+```{r}
+
+library(tidyverse)
+
+```
+
+
+## Data Wrangling:
+
+First we retrieve the data as tibble using read_delim with the delimiter being ";". Due to the fact that there is a one-to-one relationship between `BundeslandID` and `Name` we will drop `BundeslandID`. Finally we rename the columns on the one hand by translating german into english, on the other to make the structure clearer with shorter names.
+
+```{r}
+
+data <- read_delim("Corona-Tests.csv", delim = ";") |> 
+  select(-BundeslandID) |> # drops mentioned column
+  rename("Date" = "Datum",
+         "PharmacyTests" = "TestungenApotheken",
+         "PharmacyPCR" = "TestungenApothekenPCR",
+         "PharmacyAntigen" = "TestungenApothekenAntigen",
+         "BusinessTests" = "TestungenBetriebe")
+
+```
+
+
+Finally we see the structure of the data: for every day we can view the total of tests made in pharmacies and businesses in each state of Austria and the country itself. In addition the tests in pharmacies are seperated into PCR and antigen tests. It is important to note that the data for PCR tests starts in september.
+
+```{r}
+data |> head(20)
+```
+
+
+For easier handling we convert the Date column into the right type. This proves to be a more complex task than initially thought as the date format mysteriously changes beginning december 28th 2021 (which equals row 2441).
+
+```{r}
+
+# split the data into two tibbles with different format
+data_upper <- data[1:2440,1:6]
+data_lower <- data[2441:nrow(data),1:6] # nrow computes the number of rows
+
+# convert the tibbles to the same format
+data_upper <- mutate(data_upper, Date = as.Date(Date, "%d.%m.%Y")) # day.month.year
+data_lower <- mutate(data_lower, Date = as.Date(Date, "%Y-%m-%d")) # year-month-day
+
+# combine both tibbles into data again
+data <- rbind(data_upper, data_lower)
+```
+
+
+Now we split the data into 10 different tibbles, each corresponding to a state respectively Austria.
+
+```{r}
+
+bgl <- filter(data, Name == "Burgenland")
+car <- filter(data, Name == "Kärnten")
+noe <- filter(data, Name == "Niederösterreich")
+ooe <- filter(data, Name == "Oberösterreich")
+sal <- filter(data, Name == "Salzburg")
+stm <- filter(data, Name == "Steiermark")
+tir <- filter(data, Name == "Tirol")
+vbg <- filter(data, Name == "Vorarlberg")
+vie <- filter(data, Name == "Wien")
+aut <- filter(data, Name == "Österreich")
+
+```
+
+
+## Data Visualisation & Analysis
+
+### Pharmacy test type Austria
+
+At first we examine the total number of tests conducted in pharmacies comparing PCR to antigen.
+
+```{r}
+
+options(scipen = 1000) # opt out scientific notation
+
+# use gather for key value pairs, this comes in very handy for plots with multiple graphs
+longaut <- gather(aut,
+                  key = "Type of test",
+                  value = "Number of tests",
+                  PharmacyPCR, PharmacyAntigen, PharmacyTests)
+
+ggplot(longaut, aes(x = Date, y = `Number of tests`, col = `Type of test`)) +
+  geom_line(size = 1.3) +
+  scale_color_discrete(labels = c("Antigen", "PCR", "Sum")) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %y") +
+  theme_light() +
+  ggtitle("Number of total tests conducted in pharmacies in Austria") +
+  xlab("Time") +
+  ylab("Number of tests")
+
+```
+
+We can see that there is a great demand for PCR tests at the pharmacy since november, whereas the demand for antigen tests increased just a little.
+
+
+Of course we're not only interested for the total number of tests ever conducted, but also at the daily amount. For this reason we create new columns using the lag operator...
+
+```{r}
+
+autdaily <- mutate(aut,
+              PTdaily = PharmacyTests - lag(PharmacyTests),
+              PCRdaily = PharmacyPCR - lag(PharmacyPCR),
+              Antidaily = PharmacyAntigen - lag(PharmacyAntigen))
+
+```
+
+
+and view them as a lineplot. Due to the vivid changes per week, we additionally smooth the data.
+
+```{r}
+
+longautdaily <- gather(autdaily,
+                       key = "Type of test",
+                       value = "Number of tests per day",
+                       PCRdaily, Antidaily, PTdaily)
+ggplot(longautdaily, aes(x = Date, y = `Number of tests per day`, col = `Type of test`)) +
+  geom_line(size = 0.3) +
+  geom_smooth(se = FALSE) +
+  scale_color_discrete(labels = c("Antigen", "PCR", "Sum")) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %y") +
+  theme_light() +
+  ggtitle("Number of tests conducted daily in pharmacies in Austria") +
+  xlab("") +
+  ylab("Number of daily tests")
+
+```
+
+We can see many different properties:
+
+* There is a day for the sum and two days for antigen where negative daily data was registered. This is probably due to the fact that on days before or after, to many tests were listed and the total number had been corrected.
+* Here we actually see, that already during the end of october the demand for PCR tests was rising (still being the most dramatic during november). Since december the requests are very high, but declining a small amount.
+* December 15th 2021 was a record breaking day for Tests at pharmacies, both PCR and antigen. Added together more than 350.000 tests were conducted this day. This probably correlates with the need for christmas shopping, as the lockdown had ended just two days earlier.
+
+
+
+Similar to the whole country of Austria we can also examine single states. As an example we will investigate the data of Vienna and Salzburg.
+
+### Vienna
+
+We use the daily view because it is more meaningful.
+
+```{r}
+
+viedaily <- mutate(vie,
+              PTdaily = PharmacyTests - lag(PharmacyTests),
+              PCRdaily = PharmacyPCR - lag(PharmacyPCR),
+              Antidaily = PharmacyAntigen - lag(PharmacyAntigen))
+
+```
+
+```{r}
+
+longviedaily <- gather(viedaily, 
+                       key = "Type of test", 
+                       value = "Number of tests per day", 
+                       PCRdaily, Antidaily, PTdaily)
+
+ggplot(longviedaily, aes(x = Date, y = `Number of tests per day`, col = `Type of test`)) +
+  geom_line(size = 0.3) +
+  geom_smooth(se = FALSE) +
+  scale_color_discrete(labels = c("Antigen", "PCR", "Sum")) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %y") +
+  theme_light() +
+  ggtitle("Number of tests conducted daily in pharmacies in Vienna") +
+  xlab("") +
+  ylab("Number of daily tests")
+
+```
+
+
+### Salzburg
+
+```{r}
+
+saldaily <- mutate(sal,
+              PTdaily = PharmacyTests - lag(PharmacyTests),
+              PCRdaily = PharmacyPCR - lag(PharmacyPCR),
+              Antidaily = PharmacyAntigen - lag(PharmacyAntigen))
+
+longsaldaily <- gather(saldaily,
+                       key = "Type of test",
+                       value = "Number of tests per day",
+                       PCRdaily, Antidaily, PTdaily)
+
+ggplot(longsaldaily, aes(x = Date, y = `Number of tests per day`, col = `Type of test`)) +
+  geom_line(size = 0.3) +
+  geom_smooth(se = FALSE) +
+  scale_color_discrete(labels = c("Antigen", "PCR", "Sum")) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %y") +
+  theme_light() +
+  ggtitle("Number of tests conducted daily in pharmacies in the state of Salzburg") +
+  xlab("") +
+  ylab("Number of daily tests")
+
+```
+
+
+Comparing Vienna with Salzburg we view some differences:
+
+* In Salzburg the demand for tests fell strong during summer whereas in Vienna there was a just small and later decline.
+* The number of PCR tests in Salzburg is just a little bit higher than antigen since november, whereas the number for PCR tests is almost the double of antigen in Vienna.
+
+
+### Tests pharmacies vs. business Austria
+
+Finally we compare the total number of daily tests made in pharmacies with businesses in Austria.
+
+```{r}
+
+autvs <- mutate(aut,
+                Pharmacies = PharmacyTests - lag(PharmacyTests),
+                Businesses = BusinessTests - lag(BusinessTests))
+
+longautvs <- gather(autvs,
+                    key = "Conducted by",
+                    value = "Number of tests per day",
+                    Pharmacies, Businesses)
+
+ggplot(longautvs, aes(x = Date, y = `Number of tests per day`, col = `Conducted by`)) +
+  geom_line(size = 0.3) +
+  geom_smooth(se = FALSE) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %y") +
+  theme_light() +
+  ggtitle("Number of total tests conducted daily \nin pharmacies and businesses in Austria") +
+  xlab("") +
+  ylab("Number of daily tests")
+
+```
+
+As we see, far more tests are conducted in pharmacies compared to businesses (except one day in april and one in may). Especially since october the numbers for pharmacies were almost eight times as high than for businesses.
+
